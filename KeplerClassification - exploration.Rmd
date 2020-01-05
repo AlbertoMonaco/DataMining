@@ -1,0 +1,137 @@
+---
+title: "KeplerClassification - 2"
+output: html_notebook
+---
+
+```{r}
+library(ggplot2)
+library(dplyr)
+```
+
+
+```{r}
+data_path <- "data/"
+data <- read.csv(paste0(data_path, "data_preprocessed.csv"))
+```
+
+
+Let's start with some useful explorations of the data.
+
+Let's look at 4 different problematic events that the discover methods found in searching for the exoplanet.
+```{r}
+data %>% 
+  group_by(koi_fpflag_nt) %>% 
+  summarise(n())
+data %>% 
+  group_by(koi_fpflag_co) %>% 
+  summarise(n())
+data %>% 
+  group_by(koi_fpflag_ec) %>% 
+  summarise(n())
+data %>% 
+  group_by(koi_fpflag_ss) %>% 
+  summarise(n())
+```
+fpflag_ss seems to be the one most found. It describes a KOI that is observed to have a significant secondary event, transit shape, or out-of-eclipse variability, which indicates that the transit-like event is most likely caused by an eclipsing binary.
+
+
+Analyzing the approximated temperature of the exoplanet (in Kelvin):
+```{r}
+data$target <- as.factor(data$target)
+data$id <- rownames(data)
+data %>% ggplot(aes(x = id, y = koi_teq, color = target)) +
+  geom_point(size = 0.5)
+```
+
+```{r}
+data %>% 
+  group_by(target) %>% 
+  summarise(mean(koi_teq), median(koi_teq))
+```
+There is not a clear pattern, even though from median and mean we can see that higher temperatures seem to refer to rejected exoplanet. 
+
+We are going to use the same method to analyze the stellar effective temperature (in Kelvin):
+```{r}
+data$id <- rownames(data)
+data %>% ggplot(aes(x = id, y = koi_steff, color = target)) +
+  geom_point(size = 0.5)
+```
+```{r}
+data %>% 
+  group_by(target) %>% 
+  summarise(mean(koi_steff), median(koi_steff))
+```
+There is a slight difference between the judged exoplanet and not. This difference is mainly shown in the mean, symptom that it is influeced by outliers.
+
+
+Let's analyze the stars magnitude (brightness).
+```{r}
+data %>% ggplot(aes(x = id, y = koi_kepmag, color = target)) +
+  geom_point(size = 0.5)
+```
+
+```{r}
+data %>% 
+  group_by(target) %>% 
+  summarise(mean(koi_kepmag), median(koi_kepmag))
+```
+Graph and summary statistics do not show significant difference in stars magnitude between what we consider exoplanet and not.
+
+
+Let's do the same process for the planetary radius expressed as fraction of earth radii:
+```{r}
+data %>% ggplot(aes(x = id, y = koi_prad, color = target)) +
+  geom_point(size = 0.5)
+```
+
+```{r}
+data %>% 
+  group_by(target) %>% 
+  summarise(mean(koi_prad), median(koi_prad))
+```
+The presence of outliers leads to significant difference between exoplanet and not, especially in the mean.
+
+
+Let's visualize now the KOI position on the celestial sphere in the equatorial coordinate system:
+```{r}
+data %>% 
+  ggplot(aes(x = ra, y = dec, color = target)) +
+  geom_point(size = 0.5)
+```
+
+
+Finally, we can observe the target variable:
+```{r}
+data %>% 
+  ggplot(aes(x = target)) +
+  geom_histogram(stat = "count")
+
+data %>% 
+  group_by(target) %>% 
+  summarise(n())
+```
+
+As we can see from the histogram and the table above, the target variable is unbalanced: the class 1 is roughly the 30% of the total. This can lead to several issues that we can address with methods such as oversampling.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

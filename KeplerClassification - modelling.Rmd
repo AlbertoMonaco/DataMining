@@ -1,0 +1,455 @@
+---
+title: 'KeplerClassification - 3'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(caret)
+library(leaps)
+library(MASS)
+library(MLmetrics)
+library(neuralnet)
+```
+
+
+```{r}
+data_path <- "data/"
+data <- read.csv(paste0(data_path, "data_preprocessed.csv"))
+data <- data[,-1]
+```
+
+
+Once read the data, we can split them into training and test set, by the Holdout method.
+For this aim we are going to exploit the createDataPartition function of caret package, which performs a stratified random split of the data.  
+```{r}
+set.seed(123)
+train_index <- createDataPartition(data$target, p = 0.67, list = FALSE)
+
+train_set <- data[train_index, ]
+test_set <- data[-train_index, ]
+```
+
+
+Let's start with a basic logistic regression model, where we are going to consider all the features available in the data.
+```{r}
+mod_logistic_basic <- glm(target ~ . , data = train_set, family = "binomial")
+summary(mod_logistic_basic)
+```
+
+
+Let's consider now the stepwise approach in order to set the best model based on the AIC criterion.
+In fact, the stepwise selection takes, in this case, the model with all the features built above as input and, considering different sets of features (descresing for each step the number of them), will perform several regressions, calculating the AIC criterion for each of them.
+The model with the lowest AIC will be considered as the best one for this specific approach. 
+```{r}
+step.model <- stepAIC(mod_logistic_basic, direction = "backward", trace = FALSE)
+summary(step.model)
+```
+
+The best model shown above, takes 18 out of the 20 explanatory features available (it removes koi_insol and koi_fpflag_co). Almost all of them, except koi_fpflag_ec, can be considered as significant by the p-value of t-test in the table.
+
+So, we can use the results of the logistic regression performed by the stepwise approach as the baseline for the following models we will use.
+
+We first need to compute the prediction:
+```{r}
+
+prediction_logistic <- predict(step.model, type="response", test_set)
+prediction_logistic <- ifelse(prediction_logistic > 0.5, 1, 0)
+
+```
+
+
+Hence, we are going to assess the logistic regression above through several evaluation measurements:
+accuracy
+precision
+recall
+F1 measure
+AUC
+
+```{r}
+precision_logistic <- Precision(test_set$target, prediction_logistic)
+recall_logistic <-  Recall(test_set$target, prediction_logistic)
+F1measure_logistic <- (2 * precision_logistic * recall_logistic) / (precision_logistic + recall_logistic)
+accuracy_logistic <- Accuracy(test_set$target, prediction_logistic)
+auc_logistic <- AUC(test_set$target, prediction_logistic)
+print('Precision_logistic: '); print(precision_logistic)
+print('recall_logistic: '); print(recall_logistic)
+print('F1_measure_logistic: '); print(F1measure_logistic)
+print('accuracy_logistic: '); print(accuracy_logistic)
+print('auc_logistic: '); print(auc_logistic)
+
+```
+
+
+The prediction performed by the model shows good results in term of all the evaluation measures computed.
+However, this result is biased by the unbalanced distribution of the target variable in the data.
+
+
+Thus, we can set the results above as the baseline for the following models and trying to carry out some improvement.
+
+
+Since our data seem to be biased by the presence of unbalanced classes, we will use the function ovun.sample
+belonging to the package ROSE to perform an oversampling (random generation of records from the minority class):
+```{r}
+library(ROSE)
+set.seed(123)
+data_over <- ovun.sample(target ~ ., data = data, method = "over")$data
+table(data_over$target)
+
+```
+```{r}
+set.seed(123)
+train_index <- createDataPartition(data_over$target, p = 0.67, list = FALSE)
+
+train_set <- data_over[train_index, ]
+test_set <- data_over[-train_index, ]
+print(table(train_set$target))
+print(table(test_set$target))
+
+```
+
+Let's thus re-run the logistic model:
+
+```{r}
+mod_logistic_over <- glm(target ~ . , data = train_set, family = "binomial")
+summary(mod_logistic_over)
+```
+
+
+```{r}
+step.model <- stepAIC(mod_logistic_over, direction = "backward", trace = FALSE)
+summary(step.model)
+```
+
+The stepwise logistic, applied with oversampling technique, maintains all the features originally belonging to the data.
+
+```{r}
+prediction_logistic <- predict(step.model, type="response", test_set)
+prediction_logistic <- ifelse(prediction_logistic > 0.5, 1, 0)
+```
+
+
+```{r}
+precision_logistic <- Precision(test_set$target, prediction_logistic)
+recall_logistic <-  Recall(test_set$target, prediction_logistic)
+F1measure_logistic <- (2 * precision_logistic * recall_logistic) / (precision_logistic + recall_logistic)
+accuracy_logistic <- Accuracy(test_set$target, prediction_logistic)
+auc_logistic <- AUC(test_set$target, prediction_logistic)
+print('Precision_logistic: '); print(precision_logistic)
+print('recall_logistic: '); print(recall_logistic)
+print('F1_measure_logistic: '); print(F1measure_logistic)
+print('accuracy_logistic: '); print(accuracy_logistic)
+print('auc_logistic: '); print(auc_logistic)
+```
+
+Per la func confusion matrix serve fare factor
+```{r}
+prediction_logistic <- as.factor(prediction_logistic)
+```
+```{r}
+test_set$target <- as.factor(test_set$target)
+```
+
+Let's look now the confusion matrix of the 3 models performed:
+```{r}
+confusionMatrix(prediction_logistic,test_set$target,positive='1')
+```
+
+
+Good, results, despite the simplicity of the algorithm. 
+We will keep the stepwise logistic regression as the baseline for this analysis.
+If one of the following models will overcome the baseline found by the logistic "by far", we can consider it as a better model.
+
+
+
+Let's go ahead with one more classification model: Decision Tree.
+
+We will use it as model and features selection method.
+The first step is to find the optimal hyperparameters.
+
+Decision tree tuning (contains 3 fold cross validation)
+```{r}
+set.seed(123)
+metric <- "ROC"
+data_over$target <- ifelse(data_over$target == 0, 'No','Yes')
+train_set$target <- ifelse(train_set$target==0,'No','Yes')
+test_set$target <- ifelse(test_set$target==0,'No','Yes')
+
+Ctrl <- trainControl(method = "cv" , number=3, classProbs = TRUE,
+summaryFunction = twoClassSummary)
+rpartTune <- train(target ~ ., data = train_set, method = "rpart",tuneLength = 5, trControl = Ctrl, metric=metric)
+rpartTune
+
+```
+
+Results:
+```{r}
+getTrainPerf(rpartTune)
+```
+
+So, let's set the CP parameters tuned before:
+
+```{r}
+set.seed(123)
+Ctrl_save <- trainControl(method = "cv" , number=3, summaryFunction = twoClassSummary,
+classProbs = TRUE, savePredictions = TRUE)
+
+rpartTuneMy <- train(target ~ ., data = train_set, method = "rpart", tuneGrid=data.frame(cp=0.002395528),
+trControl = Ctrl_save, metric=metric)
+
+```
+
+```{r}
+set.seed(123)
+library(rpart)
+library(rpart.plot)
+mytree <- rpart(target ~ ., data = train_set, method = "class", cp = 0.002395528)
+rpart.plot(mytree, type = 4, extra = 101, cex = 0.5)
+```
+
+Let's perform Decision Tree prediction
+```{r}
+prediction_dt <- predict(mytree, type="prob", test_set)
+prediction_dt <- prediction_dt[,2]
+prediction_dt <- ifelse(prediction_dt > 0.5, 1, 0)
+prediction_dt <- ifelse(prediction_dt == 1, 'Yes', 'No')
+
+```
+
+```{r}
+prediction_dt <- as.factor(prediction_dt)
+```
+```{r}
+test_set$target <- as.factor(test_set$target)
+```
+
+Let's look now the confusion matrix of the model:
+```{r}
+confusionMatrix(prediction_dt,test_set$target,positive='Yes')
+```
+
+```{r}
+precision_dt <- Precision(test_set$target, prediction_dt)
+recall_dt <-  Recall(test_set$target, prediction_dt)
+F1measure_dt <- (2 * precision_dt * recall_dt) / (precision_dt + recall_dt)
+accuracy_dt <- Accuracy(test_set$target, prediction_dt)
+print('Precision_dt: '); print(precision_dt)
+print('recall_dt: '); print(recall_dt)
+print('F1_measure_dt: '); print(F1measure_dt)
+print('accuracy_dt: '); print(accuracy_dt)
+
+```
+
+
+We can now focus on the variables importance.
+Variable importance might generally be computed based on the corresponding reduction of predictive accuracy when the predictor of interest is removed or some measure of decrease of node impurity. 
+
+Analyzing the variables importance:
+```{r}
+Vimportance <- varImp(rpartTuneMy)
+plot(Vimportance)
+```
+
+4 out of 20 variables are defined as "not important" by the Decision Tree.
+In this way, we will carry out a feature selection based on these results:
+
+```{r}
+data_over_selected <- data_over %>% 
+  dplyr::select(c(target, koi_score, koi_prad, koi_fpflag_ss, koi_fpflag_co, koi_impact, koi_model_snr, koi_depth, koi_duration, koi_slogg, koi_teq, koi_period, koi_kepmag,koi_insol, ra, koi_srad, dec))
+```
+
+```{r}
+set.seed(123)
+train_index <- createDataPartition(data_over_selected$target, p = 0.67, list = FALSE)
+
+train_set <- data_over_selected[train_index, ]
+test_set <- data_over_selected[-train_index, ]
+print(table(train_set$target))
+print(table(test_set$target))
+
+```
+
+
+
+Now, we can continue the project performing more complex and accurate models, such as random forest.
+Let's tune its parameters: (mtry and ntree):
+
+```{r}
+library(randomForest)
+customRF <- list(type = "Classification", library = "randomForest", loop = NULL)
+customRF$parameters <- data.frame(parameter = c("mtry", "ntree"),
+class = rep("numeric", 2),
+label = c("mtry", "ntree"))
+customRF$grid <- function(x, y, len = NULL, search = "grid") {}
+customRF$fit <- function(x, y, wts, param, lev, last, weights, classProbs, ...) {
+randomForest(x, y, mtry = param$mtry, ntree=param$ntree, ...)
+}
+customRF$predict <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+predict(modelFit, newdata)
+customRF$prob <- function(modelFit, newdata, preProc = NULL, submodels = NULL)
+predict(modelFit, newdata, type = "prob")
+customRF$sort <- function(x) x[order(x[,1]),]
+customRF$levels <- function(x) x$classes
+
+set.seed(123)
+tunegrid <- expand.grid(.mtry=c(4:9), .ntree=c(100,500))
+
+
+rpartTuneMyRf <- train(target ~ ., data = train_set, method = customRF,
+tuneGrid=tunegrid, trControl = Ctrl, metric=metric)
+rpartTuneMyRf
+
+```
+
+mtry = 4 and ntree = 500 are judged as the best parameters, so let's set them and run a Random Forest:
+
+```{r}
+set.seed(123)
+tunegrid <- expand.grid(.mtry=4, .ntree=500)
+rpartTuneMyRf_ok <- train(target ~ ., data = train_set, method = customRF,
+tuneGrid=tunegrid, trControl = Ctrl_save, metric=metric)
+rpartTuneMyRf_ok
+
+```
+
+
+```{r}
+prediction_RF <- predict(rpartTuneMyRf_ok, type="prob", test_set)
+prediction_RF <- prediction_RF[,2]
+prediction_RF <- ifelse(prediction_RF > 0.5, 1, 0)
+prediction_RF <- ifelse(prediction_RF == 1, 'Yes', 'No')
+```
+
+```{r}
+prediction_RF <- as.factor(prediction_RF)
+```
+```{r}
+test_set$target <- as.factor(test_set$target)
+```
+
+Let's look now the confusion matrix of the model:
+```{r}
+confusionMatrix(prediction_RF,test_set$target,positive='Yes')
+```
+
+
+
+```{r}
+precision_rf <- Precision(test_set$target, prediction_RF)
+recall_rf <-  Recall(test_set$target, prediction_RF)
+F1measure_rf <- (2 * precision_rf * recall_rf) / (precision_rf + recall_rf)
+accuracy_rf <- Accuracy(test_set$target, prediction_RF)
+auc_rf <- AUC(test_set$target, prediction_RF)
+print('Precision_rf: '); print(precision_rf)
+print('recall_rf: '); print(recall_rf)
+print('F1_measure_rf: '); print(F1measure_rf)
+print('accuracy_rf: '); print(accuracy_rf)
+```
+
+
+So far, the best results have been achieved by the Random Forest.
+Let's try now to build a Neural Network with a single layer.
+
+We will try 3 different tuning parameters methods:
+
+PCA
+```{r}
+tunegrid <- expand.grid(size=c(1:5), decay = c(0.0002, 0.0003, 0.00001, 0.0001))
+nnetFit_defgridDR1 <- train(train_set[,-1], train_set$target,
+method = "nnet",
+preProcess = 'pca',
+metric=metric,
+trControl=Ctrl, tuneGrid=tunegrid,
+trace = FALSE,
+maxit = 100)
+getTrainPerf(nnetFit_defgridDR1)
+```
+```{r}
+nnetFit_defgridDR1$bestTune
+```
+
+Normalization
+```{r}
+tunegrid <- expand.grid(size=c(1:5), decay = c(0.0002, 0.0003, 0.00001, 0.0001))
+nnetFit_defgridDR2 <- train(train_set[,-1], train_set$target,
+method = "nnet",
+preProcess = c('range'),
+metric=metric,
+trControl=Ctrl, tuneGrid=tunegrid,
+trace = FALSE,
+maxit = 100)
+getTrainPerf(nnetFit_defgridDR2)
+```
+
+```{r}
+nnetFit_defgridDR2$bestTune
+```
+
+Standardization
+```{r}
+tunegrid <- expand.grid(size=c(1:5), decay = c(0.0002, 0.0003, 0.00001, 0.0001))
+nnetFit_defgridDR3 <- train(train_set[, -1], train_set$target,
+method = "nnet",
+preProcess = c('center', 'scale'),
+metric=metric,
+trControl=Ctrl, tuneGrid=tunegrid,
+trace = FALSE,
+maxit = 100)
+getTrainPerf(nnetFit_defgridDR3)
+```
+
+
+```{r}
+nnetFit_defgridDR3$bestTune
+```
+
+
+With all the 3 preprocessing methods, we manage to obtain very satisfied results.
+Let's keep though the one able to return the best ones, standardization, and run the algorithm:
+
+```{r}
+tunegrid <- expand.grid(size = 1, decay = 0.0003)
+nnetFit <- train(train_set[,-1], train_set$target,
+method = "nnet",
+preProcess = c('center', 'scale'),
+metric=metric,
+trControl=Ctrl, tuneGrid=tunegrid,
+trace = FALSE,
+maxit = 100)
+getTrainPerf(nnetFit_defgridDR3)
+```
+
+```{r}
+prediction_NN <- predict(nnetFit, type="prob", test_set)
+prediction_NN <- prediction_NN[,2]
+prediction_NN <- ifelse(prediction_NN > 0.5, 1, 0)
+prediction_NN <- ifelse(prediction_NN == 1, 'Yes', 'No')
+```
+
+```{r}
+prediction_NN <- as.factor(prediction_NN)
+```
+```{r}
+test_set$target <- as.factor(test_set$target)
+```
+
+Let's look now the confusion matrix of the model:
+```{r}
+confusionMatrix(prediction_NN,test_set$target,positive='Yes')
+```
+
+```{r}
+precision_nn <- Precision(test_set$target, prediction_NN)
+recall_nn <-  Recall(test_set$target, prediction_NN)
+F1measure_nn <- (2 * precision_nn * recall_nn) / (precision_nn + recall_nn)
+accuracy_nn <- Accuracy(test_set$target, prediction_NN)
+print('Precision_nn: '); print(precision_nn)
+print('recall_nn: '); print(recall_nn)
+print('F1_measure_nn: '); print(F1measure_nn)
+print('accuracy_nn: '); print(accuracy_nn)
+```
+

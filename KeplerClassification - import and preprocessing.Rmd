@@ -1,0 +1,112 @@
+---
+title: "KeplerClassification - 1"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries import.
+```{r}
+library(naniar)
+library(tidyverse)
+library(zoo)
+```
+
+We start reading the original data.
+```{r}
+data_original <- read.csv(paste0("data/cumulative.csv"))
+summary(data_original)
+```
+
+Before going to analyze and expore the data, we can select the variables of interest in this case. In fact, several features can be considered as useless for the aim of this project, in particular:
+- All the errors with respect to the physical quantities.
+- Categorical variables not useful for our purpose.
+```{r}
+data <- data_original %>% 
+  select(-c(rowid, kepid, kepoi_name, kepler_name, koi_tce_delivname, koi_tce_plnt_num, ends_with("err1"), ends_with("err2")))
+```
+
+
+Start exploring the data
+```{r}
+gg_miss_var(data)
+```
+
+Since quite a few observations are represented as missing values for some features, we are going to eliminate them.
+
+Removing NA observation of koi_teq, koi_kepmag
+```{r}
+data <- data %>% 
+    filter(!is.na(koi_teq), !is.na(koi_kepmag))
+
+gg_miss_var(data)
+```
+
+364 observations were missing values and thus have been eliminated.
+
+Now, only variable koi_score presents a big amount of missing values. (Roughly 15%).
+
+We would like to handle it through 2 different methods:
+- Records elimination
+- Missing replacement by conditionated mean among the koi_disposition classes.
+
+```{r}
+data %>% 
+  filter(is.na(koi_score))
+```
+koi_score NA: among candidate = 393
+koi_score NA: among confirmed = 11
+koi_score NA: among false positive = 802
+tot: 1206.
+
+
+Let's analyze the differences between koi_disposition and koi_pdisposition:
+```{r}
+data %>% 
+  group_by(koi_disposition, koi_pdisposition) %>% 
+  summarise(tot = n())
+```
+
+We should state that:
+pdisposition classifies the records only as false positive or candidate based on the kepler data.
+Conversely, disposition refers to the Exoplanet Archive categories.
+Thus, only by this last variable, we can state if a koi is effectively an exoplanet or not.
+Moreover, we will eliminate all the missing observations (1206) for the feature koi_score.
+The reason lies on the fact that koi_score is thought as a value between 0 and 1, which indicates the confidence in the koi disposition.
+We can't make any assumption of the confidence value, since we are not domain experts.
+Furthermore, almost all the NA for koi_score concerns objects that are not confirmed.
+
+```{r}
+data <- data %>% 
+  select(- koi_pdisposition) %>% 
+  filter(!is.na(koi_score))
+```
+
+Missing map:
+```{r}
+gg_miss_var(data)
+```
+We don't have any missing value anymore.
+
+So, we will consider as target variable koi_disposition.
+Before that, we will make a binarization, considering as positive class (value 1) all the objects confirmed, while false positive and candidate will be considered as negative (value 0).
+
+```{r}
+data <- data %>% 
+  mutate(target = ifelse(koi_disposition=='CONFIRMED', 1, 0)) %>% 
+  select(-koi_disposition)
+```
+
+```{r}
+#write.csv(data, paste0(data_path, "data_preprocessed.csv"))
+```
+
+
+
+
+
+
+
+
